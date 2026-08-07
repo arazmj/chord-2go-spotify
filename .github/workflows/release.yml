@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  device-payload:
+    name: Build ARMv7 payload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cross-build and emulation tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-user
+          cargo install cargo-zigbuild --version 0.23.0 --locked
+      - name: Build librespot
+        run: scripts/build-librespot.sh dist/librespot-armv7
+      - name: Build device payload
+        env:
+          LIBRESPOT_BINARY: dist/librespot-armv7
+          LIBRESPOT_LICENSE: dist/librespot.LICENSE
+        run: scripts/build-payload.sh src/chord_2go_spotify/data/spotify-install.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: device-payload
+          path: src/chord_2go_spotify/data/spotify-install.tar.gz
+          if-no-files-found: error
+
+  host-packages:
+    name: Package ${{ matrix.artifact }}
+    needs: device-payload
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            artifact: chord-2go-spotify-macos-arm64
+            executable: chord-2go-spotify
+          - runner: macos-15-intel
+            artifact: chord-2go-spotify-macos-x86_64
+            executable: chord-2go-spotify
+          - runner: windows-latest
+            artifact: chord-2go-spotify-windows-x86_64
+            executable: chord-2go-spotify.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: device-payload
+          path: src/chord_2go_spotify/data
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packaging tools
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+      - name: Build executable
+        run: pyinstaller --clean --noconfirm chord-2go-spotify.spec
+      - name: Smoke test executable
+        shell: bash
+        run: |
+          "dist/${{ matrix.executable }}" --help
+          "dist/${{ matrix.executable }}" --version
+      - name: Verify native architecture
+        if: runner.os == 'macOS'
+        run: file "dist/${{ matrix.executable }}"
+      - name: Create macOS archive
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p release release-stage
+          chmod 0755 "dist/${{ matrix.executable }}"
+          cp "dist/${{ matrix.executable }}" LICENSE README.md \
+            THIRD_PARTY_NOTICES.md release-stage/
+          (
+            cd release-stage
+            zip -9 "../release/${{ matrix.artifact }}.zip" ./*
+          )
+      - name: Create Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release, release-stage | Out-Null
+          Copy-Item "dist/${{ matrix.executable }}" release-stage/
+          Copy-Item LICENSE, README.md, THIRD_PARTY_NOTICES.md release-stage/
+          Compress-Archive `
+            -Path "release-stage/*" `
+            -DestinationPath "release/${{ matrix.artifact }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: host-packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chord-2go-spotify-*
+          path: release
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum ./*.zip > SHA256SUMS.txt
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release/chord-2go-spotify.spdx.json
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: release/*.zip
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.zip
+            release/SHA256SUMS.txt
+            release/chord-2go-spotify.spdx.json

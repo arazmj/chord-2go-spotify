@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+ROOT_PREFIX=${CHORD_2GO_SPOTIFY_ROOT:-}
+APLAY_CMD=${APLAY_CMD:-/usr/bin/aplay}
+AUDIO_HELPER=${LIBRESPOT_AUDIO_HELPER:-/usr/local/sbin/librespot-audio}
+
+resolve_path()
+{
+    case "$1" in
+        /*)
+            if [ -n "$ROOT_PREFIX" ] && [ "$ROOT_PREFIX" != "/" ]; then
+                printf '%s%s\n' "${ROOT_PREFIX%/}" "$1"
+            else
+                printf '%s\n' "$1"
+            fi
+            ;;
+        *)
+            printf '%s\n' "$1"
+            ;;
+    esac
+}
+
+"$(resolve_path "$AUDIO_HELPER")" acquire
+exec "$APLAY_CMD" -q -D soundcard -f S32_LE -c 2 -r 44100 -t raw

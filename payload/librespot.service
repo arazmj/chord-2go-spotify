@@ -1,0 +1,14 @@
+[Unit]
+Description=Spotify Connect for Chord 2go
+Wants=network-online.target sound.target
+After=network-online.target sound.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/librespot --name Chord-2go-Spotify --backend subprocess --device /usr/local/bin/librespot-aplay --format S32 --bitrate 320 --initial-volume 50 --cache /var/cache/chord-2go-spotify --onevent /usr/local/sbin/librespot-audio --emit-sink-events
+ExecStopPost=/usr/local/sbin/librespot-audio release
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

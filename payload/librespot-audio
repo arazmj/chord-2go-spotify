@@ -1,0 +1,174 @@
+#!/bin/sh
+set -u
+
+ROOT_PREFIX=${CHORD_2GO_SPOTIFY_ROOT:-}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
+LOGGER_CMD=${LOGGER_CMD:-logger}
+MPC_CMD=${MPC_CMD:-/usr/bin/mpc}
+SLEEP_CMD=${SLEEP_CMD:-sleep}
+
+STATE_FILE=/run/librespot-services
+LOCK_DIR=/run/librespot-audio.lock
+UNITS="upmpdcli mpd-sdhc mpd-scsi raat shairport-sync bluealsa"
+
+resolve_path()
+{
+    case "$1" in
+        /*)
+            if [ -n "$ROOT_PREFIX" ] && [ "$ROOT_PREFIX" != "/" ]; then
+                printf '%s%s\n' "${ROOT_PREFIX%/}" "$1"
+            else
+                printf '%s\n' "$1"
+            fi
+            ;;
+        *)
+            printf '%s\n' "$1"
+            ;;
+    esac
+}
+
+log_notice()
+{
+    "$LOGGER_CMD" -t librespot-audio "$*" >/dev/null 2>&1 || true
+}
+
+path_exists()
+{
+    [ -e "$1" ] || [ -L "$1" ]
+}
+
+lock()
+{
+    lock_real=$(resolve_path "$LOCK_DIR")
+    parent=$(dirname "$lock_real")
+    mkdir -p "$parent"
+    attempts=0
+    while ! mkdir "$lock_real" 2>/dev/null; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 15 ]; then
+            log_notice "timed out waiting for audio lock"
+            return 1
+        fi
+        "$SLEEP_CMD" 1
+    done
+}
+
+unlock()
+{
+    rmdir "$(resolve_path "$LOCK_DIR")" 2>/dev/null || true
+}
+
+acquire()
+{
+    state_real=$(resolve_path "$STATE_FILE")
+    state_parent=$(dirname "$state_real")
+    tmp=
+
+    path_exists "$state_real" && return 0
+    lock || return 1
+    if path_exists "$state_real"; then
+        unlock
+        return 0
+    fi
+
+    mkdir -p "$state_parent"
+    tmp=$state_real.$$
+    if ! : > "$tmp"; then
+        log_notice "failed to create audio state file"
+        unlock
+        return 1
+    fi
+
+    for unit in $UNITS; do
+        if "$SYSTEMCTL" is-active --quiet "$unit" >/dev/null 2>&1; then
+            echo "$unit" >> "$tmp" || {
+                rm -f "$tmp"
+                unlock
+                return 1
+            }
+        fi
+    done
+
+    "$MPC_CMD" stop >/dev/null 2>&1 || true
+
+    failed=0
+    while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        if ! "$SYSTEMCTL" stop "$unit"; then
+            log_notice "failed to stop $unit"
+            failed=1
+        fi
+    done < "$tmp"
+
+    if [ "$failed" -ne 0 ]; then
+        while IFS= read -r unit; do
+            [ -n "$unit" ] || continue
+            "$SYSTEMCTL" start "$unit" >/dev/null 2>&1 || true
+        done < "$tmp"
+        rm -f "$tmp"
+        unlock
+        return 1
+    fi
+
+    if ! mv "$tmp" "$state_real"; then
+        while IFS= read -r unit; do
+            [ -n "$unit" ] || continue
+            "$SYSTEMCTL" start "$unit" >/dev/null 2>&1 || true
+        done < "$tmp"
+        rm -f "$tmp"
+        unlock
+        return 1
+    fi
+
+    unlock
+    log_notice "Spotify acquired the audio output"
+}
+
+release()
+{
+    state_real=$(resolve_path "$STATE_FILE")
+
+    path_exists "$state_real" || return 0
+    lock || return 1
+    if ! path_exists "$state_real"; then
+        unlock
+        return 0
+    fi
+
+    failed=0
+    while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        if ! "$SYSTEMCTL" start "$unit"; then
+            log_notice "failed to restore $unit"
+            failed=1
+        fi
+    done < "$state_real"
+
+    if [ "$failed" -eq 0 ]; then
+        rm -f "$state_real"
+        log_notice "Spotify released the audio output"
+    fi
+
+    unlock
+    return "$failed"
+}
+
+action=${1:-${PLAYER_EVENT:-}}
+case "$action" in
+    acquire|loading|playing)
+        acquire
+        ;;
+    release|stopped|session_disconnected)
+        release
+        ;;
+    sink)
+        case "${SINK_STATUS:-}" in
+            running)
+                acquire
+                ;;
+            closed)
+                release
+                ;;
+        esac
+        ;;
+esac
