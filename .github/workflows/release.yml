@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qemu-user
-          cargo install cargo-zigbuild --version 0.23.0 --locked
+          cargo install cargo-zigbuild --version 0.21.8 --locked
       - name: Build librespot
         run: scripts/build-librespot.sh dist/librespot-armv7
       - name: Build device payload

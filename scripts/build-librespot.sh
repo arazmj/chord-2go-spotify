@@ -20,7 +20,9 @@ command -v cargo >/dev/null 2>&1 || {
     echo "cargo is required" >&2
     exit 1
 }
-cargo +"$TOOLCHAIN" zigbuild --version >/dev/null 2>&1 || {
+command -v cargo-zigbuild >/dev/null 2>&1 &&
+    cargo-zigbuild --version >/dev/null 2>&1 &&
+    cargo +"$TOOLCHAIN" --version >/dev/null 2>&1 || {
     echo "Rust $TOOLCHAIN and cargo-zigbuild are required" >&2
     exit 1
 }

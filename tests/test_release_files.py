@@ -29,6 +29,7 @@ class ReleaseFilesTests(unittest.TestCase):
 
         self.assertIn("SHA256SUMS.txt", workflow)
         self.assertIn("attest-build-provenance", workflow)
+        self.assertIn("cargo-zigbuild --version 0.21.8", workflow)
         self.assertIn("LICENSE README.md", workflow)
         self.assertIn("THIRD_PARTY_NOTICES.md", workflow)
 
