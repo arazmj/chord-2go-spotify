@@ -30,7 +30,7 @@ jobs:
           LIBRESPOT_BINARY: dist/librespot-armv7
           LIBRESPOT_LICENSE: dist/librespot.LICENSE
         run: scripts/build-payload.sh src/chord_2go_spotify/data/spotify-install.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: device-payload
           path: src/chord_2go_spotify/data/spotify-install.tar.gz
@@ -97,7 +97,7 @@ jobs:
           Compress-Archive `
             -Path "release-stage/*" `
             -DestinationPath "release/${{ matrix.artifact }}.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: release/${{ matrix.artifact }}.zip
