@@ -1,4 +1,4 @@
 bleak==3.0.2
 pyinstaller==6.21.0
 setuptools==83.0.0
-wheel==0.47.0
+wheel==0.48.0
